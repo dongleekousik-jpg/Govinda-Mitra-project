@@ -53,8 +53,13 @@ export const speak = (text: string, language: string, onEnd: () => void) => {
   isStopped = false;
 
   // --- CHUNKING STRATEGY ---
-  const rawChunks = text.match(/[^.!?]+[.!?]+|[^\s]+(?=\s|$)/g) || [text];
-  const chunks = rawChunks.map(c => c.trim()).filter(c => c.length > 0);
+  // Fix: Changed regex to support Indian Danda (|) and prevent splitting by single words.
+  // It matches any sequence of characters that is NOT punctuation, followed by punctuation OR end of string.
+  const rawChunks = text.match(/[^.!?|।\n]+(?:[.!?|।\n]+|$)/g);
+  
+  const chunks = rawChunks 
+    ? rawChunks.map(c => c.trim()).filter(c => c.length > 0) 
+    : [text]; // If regex fails, speak the whole text as one block
 
   if (chunks.length === 0) {
       onEnd();
@@ -98,7 +103,7 @@ export const speak = (text: string, language: string, onEnd: () => void) => {
       }
 
       // Tuning for better sound
-      utterance.rate = 0.85; // Slightly slower is more intelligible
+      utterance.rate = 0.9; // Slightly slower is more intelligible
       utterance.pitch = 1.0; 
 
       utterance.onend = () => {
@@ -182,6 +187,11 @@ export function getGlobalAudioContext(): AudioContext {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     globalAudioContext = new AudioContextClass();
   }
+  // Ensure we try to wake it up if it was closed/suspended (common on Desktop reload)
+  if (globalAudioContext.state === 'closed') {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      globalAudioContext = new AudioContextClass();
+  }
   return globalAudioContext;
 }
 
@@ -192,9 +202,10 @@ export function unlockAudioContext() {
     ctx.resume().catch(e => console.error("Ctx resume failed", e));
   }
   
-  // Play silent buffer to force unlock on iOS
+  // Play silent buffer to force unlock on iOS/Android
   try {
-    const buffer = ctx.createBuffer(1, 1, 22050);
+    // Match native sample rate if possible, usually 44100 or 48000
+    const buffer = ctx.createBuffer(1, 1, ctx.sampleRate || 44100);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
@@ -289,35 +300,66 @@ function writeString(view: DataView, offset: number, string: string) {
   }
 }
 
+/**
+ * Manually decodes PCM data if browser native decoding fails.
+ * Guarantees playback on stubborn Desktop browsers.
+ */
+function manualDecodePCM(ctx: AudioContext, pcmData: Uint8Array): AudioBuffer {
+    // Gemini sends 24kHz
+    const sampleRate = 24000;
+    
+    // Ensure we have an even number of bytes for 16-bit
+    let safeData = pcmData;
+    if (pcmData.length % 2 !== 0) {
+        safeData = pcmData.slice(0, pcmData.length - 1);
+    }
+    
+    // Create Int16 View (Little Endian by default on most systems)
+    const int16 = new Int16Array(safeData.buffer, safeData.byteOffset, safeData.byteLength / 2);
+    
+    // Convert to Float32 [-1.0, 1.0]
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768.0;
+    }
+    
+    const buffer = ctx.createBuffer(1, float32.length, sampleRate);
+    buffer.getChannelData(0).set(float32);
+    return buffer;
+}
+
 export async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  // Use the Robust WAV Header method.
-  // Gemini 2.5 Flash TTS returns 24kHz, 16-bit, Mono PCM.
-  const wavBuffer = getPcmWavData(data, 24000, 1, 16);
-  
-  // Use native browser decoding (handles resampling to Desktop 48kHz automatically)
-  return await ctx.decodeAudioData(wavBuffer);
+  // STRATEGY 1: Wrap in WAV and use Native Browser Decoder (Best for Mobile & Standard Desktop)
+  try {
+      // Gemini 2.5 TTS is 24kHz, Mono, 16-bit PCM
+      const wavBuffer = getPcmWavData(data, 24000, 1, 16);
+      return await ctx.decodeAudioData(wavBuffer);
+  } catch (e) {
+      console.warn("Native WAV decoding failed, falling back to manual PCM decoding", e);
+      // STRATEGY 2: Manual PCM Decoding (Best for Strict Desktop / Decoding Errors)
+      return manualDecodePCM(ctx, data);
+  }
 }
 
 export function playGlobalAudio(buffer: AudioBuffer, onEnded?: () => void) {
   stopGlobalAudio(); 
   const ctx = getGlobalAudioContext();
   
-  // FORCE RESUME for reliability
+  const play = () => startSource(ctx, buffer, onEnded);
+
+  // Force Resume if suspended (Common on Desktop first click)
   if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
-          startSource(ctx, buffer, onEnded);
-      }).catch(e => {
+      ctx.resume().then(play).catch(e => {
           console.error("Failed to resume ctx before play", e);
-          // Try to play anyway
-          startSource(ctx, buffer, onEnded);
+          play(); 
       });
   } else {
-      startSource(ctx, buffer, onEnded);
+      play();
   }
 }
 
