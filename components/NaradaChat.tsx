@@ -26,6 +26,30 @@ const NaradaChat: React.FC = () => {
     chatPanelRef.current?.scrollTo(0, chatPanelRef.current.scrollHeight);
   }, [messages]);
 
+  // Offline Fallback Logic
+  const getOfflineResponse = (input: string): string => {
+      const lower = input.toLowerCase();
+      if (lower.includes("hi") || lower.includes("hello") || lower.includes("namaste") || lower.includes("govinda")) {
+          return "Govinda! Govinda! I am here, devotee. How can I help you?";
+      }
+      if (lower.includes("room") || lower.includes("stay") || lower.includes("accommodation") || lower.includes("hotel")) {
+          return "For accommodation, please visit the CRO Office or check the 'Important Places' section in the menu.";
+      }
+      if (lower.includes("food") || lower.includes("eat") || lower.includes("prasadam") || lower.includes("lunch") || lower.includes("dinner")) {
+          return "Delicious free Annaprasadam is served at the Matrusri Tarigonda Vengamamba Complex. Govinda!";
+      }
+      if (lower.includes("darshan") || lower.includes("ticket") || lower.includes("booking") || lower.includes("queue")) {
+          return "For Darshan tickets and queue info, please visit the TTD Information Desk or the official TTD website.";
+      }
+      if (lower.includes("toilet") || lower.includes("bathroom") || lower.includes("washroom")) {
+          return "Public restrooms are located near the CRO office, bus stand, and queue complexes.";
+      }
+      if (lower.includes("locker") || lower.includes("mobile") || lower.includes("phone")) {
+          return "Mobile phones and electronics must be deposited at the counters before entering the queue lines.";
+      }
+      return "I am currently in Offline Mode (Server Unavailable). Please check the 'Important Places' or 'Rules' sections for more info. Govinda!";
+  };
+
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
 
@@ -49,7 +73,7 @@ const NaradaChat: React.FC = () => {
       // Check for HTML response (Preview/Offline)
       const contentType = response.headers.get("content-type");
       if (!response.ok || !contentType || !contentType.includes("application/json")) {
-          throw new Error("API Unavailable or Misconfigured");
+          throw new Error("API Unavailable");
       }
 
       const data = await response.json();
@@ -57,25 +81,21 @@ const NaradaChat: React.FC = () => {
       const naradaMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: 'narada',
-        text: data.text || "Om Namo Venkatesaya. I am currently meditating.",
+        text: data.text || "Om Namo Venkatesaya.",
         mapLink: data.mapLink ? data.mapLink : undefined,
       };
       setMessages((prev) => [...prev, naradaMessage]);
 
     } catch (error) {
-      console.error('Error with Chat API:', error);
+      console.warn('Chat API failed, using offline fallback:', error);
       
-      let fallbackText = 'My apologies, devotee. I am having trouble connecting to the divine realms. Please check your internet connection.';
-      
-      const errMsg = (error as Error).message;
-      if (errMsg.includes("API Unavailable") || errMsg.includes("Misconfigured")) {
-         fallbackText = "I am currently in 'Mauna Vratam' (Silence) because the server is unavailable. Please check Vercel settings or internet.";
-      }
+      // Use Smart Offline Response instead of generic error
+      const offlineText = getOfflineResponse(text);
 
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: 'narada',
-        text: fallbackText,
+        text: offlineText,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {

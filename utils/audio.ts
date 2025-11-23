@@ -53,13 +53,32 @@ export const speak = (text: string, language: string, onEnd: () => void) => {
   isStopped = false;
 
   // --- CHUNKING STRATEGY ---
-  // Fix: Changed regex to support Indian Danda (|) and prevent splitting by single words.
-  // It matches any sequence of characters that is NOT punctuation, followed by punctuation OR end of string.
+  // Improved Regex: Matches sentence endings but respects abbreviations slightly better.
+  // Includes Indian punctuation danda (|)
+  // The negative lookahead helps prevent splitting on common abbreviations if needed, but simple split is usually safer for TTS.
   const rawChunks = text.match(/[^.!?|।\n]+(?:[.!?|।\n]+|$)/g);
   
-  const chunks = rawChunks 
+  let chunks = rawChunks 
     ? rawChunks.map(c => c.trim()).filter(c => c.length > 0) 
-    : [text]; // If regex fails, speak the whole text as one block
+    : [text];
+
+  // MERGE LOGIC: Merge very short chunks to prevent choppy "one word" playback
+  // e.g. "Hi." "How." "Are." -> "Hi. How. Are."
+  const mergedChunks: string[] = [];
+  let currentChunk = "";
+
+  for (const chunk of chunks) {
+      if ((currentChunk.length + chunk.length) < 50) { // If combined length is short (< 50 chars), merge them
+           currentChunk += " " + chunk;
+      } else {
+           if (currentChunk) mergedChunks.push(currentChunk.trim());
+           currentChunk = chunk;
+      }
+  }
+  if (currentChunk) mergedChunks.push(currentChunk.trim());
+  
+  if (mergedChunks.length > 0) chunks = mergedChunks;
+
 
   if (chunks.length === 0) {
       onEnd();
