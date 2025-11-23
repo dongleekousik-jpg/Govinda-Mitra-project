@@ -1,0 +1,8 @@
+{
+  "name": "Govinda Mitra",
+  "description": "Govinda Mitra is a smart, devotional guide for Tirumala devotees. It helps first-time visitors easily locate important places, understand spiritual spots, and follow temple rules, with an AI-powered virtual guide named Narada.",
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ]
+}
